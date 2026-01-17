@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI问答助手</title>
+    <link rel="stylesheet" type="text/css" href="style.css">
+</head>
+<body>
+    <!-- 登录模态框 -->
+    <div class="modal" id="loginModal">
+        <div class="modal-content">
+            <h2>欢迎使用AI问答助手</h2>
+            <form id="loginForm">
+                <div class="input-group">
+                    <label for="userName">请输入您的真实姓名：</label>
+                    <input 
+                        type="text" 
+                        id="userName" 
+                        placeholder="例如：张三"
+                        required
+                    >
+                    <div class="error-message" id="errorMessage"></div>
+                </div>
+                <button type="submit" class="submit-button">开始使用</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="header">
+        <h1>
+            <span>AI问答助手</span>
+        </h1>
+        <div class="user-info" id="userInfo">
+            <!-- 用户信息将在这里显示 -->
+        </div>
+    </div>
+    
+    <div class="chat-container" id="chatContainer">
+        <!-- 聊天消息将在这里显示 -->
+    </div>
+    
+    <div class="input-container">
+        <textarea 
+            class="message-input" 
+            id="messageInput" 
+            placeholder="输入你的问题..."
+            rows="1"
+            disabled
+        ></textarea>
+        <button class="send-button" id="sendButton" disabled>
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="22" y1="2" x2="11" y2="13"></line>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+        </button>
+    </div>
+
+    <script type="text/javascript" src="./web.js"></script>
+</body>
+</html>
+
