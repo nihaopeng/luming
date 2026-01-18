@@ -108,7 +108,7 @@ class PretrainDataset(Dataset):
         super().__init__()
         self.tokenizer = tokenizer
         self.max_length = max_length
-        self.samples = JsonlDataset(data_files=data_path, split='train') # split = [0:100]/[:x%]/[-100:]
+        self.samples = JsonlDataset(file_path=data_path, split='train') # split = [0:100]/[:x%]/[-100:]
 
     def __len__(self):
         return len(self.samples)

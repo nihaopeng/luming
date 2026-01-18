@@ -13,6 +13,7 @@
 # Modifications Copyright 2026 Yutao Peng, Northeastern University, liaoning, China
 
 
+from dataclasses import dataclass
 import torch
 import torch.nn.functional as F
 import math
@@ -22,7 +23,7 @@ from typing import Optional, Tuple, List, Union
 from config import MiniMindConfig
 
 ACT2FN = {
-    "silu":nn.SiLU,
+    "silu":nn.SiLU(),
     "relu": nn.ReLU(),
     "gelu": nn.GELU(),
     "swish": nn.SiLU(),  # alias
@@ -348,3 +349,60 @@ class MiniMindModel(nn.Module):
 
         aux_loss = sum([l.mlp.aux_loss for l in self.layers if isinstance(l.mlp, MOEFeedForward)], hidden_states.new_zeros(1).squeeze())
         return hidden_states, presents, aux_loss
+    
+@dataclass
+# dataclass 自动生成以下内容。
+# __init__(self, loss=None, logits=None, ...)
+# __repr__(self) → 打印时显示字段值（调试友好）
+# __eq__(self, other) → 按字段值比较是否相等
+# 还可选生成 __hash__、支持 frozen（不可变）等
+class CausalLMOutputWithPast:
+    loss: Optional[torch.Tensor] = None
+    logits: torch.Tensor = None
+    past_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None
+    aux_loss: Optional[torch.Tensor] = None  # 可选，用于 MoE
+
+class MiniMindForCausalLM(nn.Module):
+    def __init__(self, config: MiniMindConfig):
+        super().__init__()
+        self.config = config
+        self.model = MiniMindModel(config)
+        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        # Tie weights (optional but common)
+        self.lm_head.weight = self.model.embed_tokens.weight
+
+    def forward(
+        self,
+        input_ids: Optional[torch.Tensor] = None,
+        attention_mask: Optional[torch.Tensor] = None,
+        labels: Optional[torch.Tensor] = None,
+        past_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None,
+        use_cache: bool = False,
+        **kwargs
+    ) -> CausalLMOutputWithPast:
+        # 调用 base model
+        hidden_states, presents, aux_loss = self.model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            past_key_values=past_key_values,
+            use_cache=use_cache,
+            **kwargs
+        )
+
+        logits = self.lm_head(hidden_states)
+
+        loss = None
+        if labels is not None:
+            # Shift so that tokens < n predict n
+            shift_logits = logits[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+            # Flatten the tokens
+            loss_fct = nn.CrossEntropyLoss()
+            loss = loss_fct(shift_logits.view(-1, self.config.vocab_size), shift_labels.view(-1))
+
+        return CausalLMOutputWithPast(
+            loss=loss,
+            logits=logits,
+            past_key_values=presents,
+            aux_loss=aux_loss
+        )
