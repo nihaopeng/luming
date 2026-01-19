@@ -21,7 +21,7 @@ from torch import optim
 from torch.utils.data import DataLoader, DistributedSampler
 from torch.nn.parallel import DistributedDataParallel
 from config import MiniMindConfig
-from dataloader import PretrainDataset
+from dataloader import PretrainDataset, SFTDataset
 from utils import Logger, SkipBatchSampler, get_lr, init_distributed_mode, init_model, is_main_process, lm_checkpoint, setup_seed,get_args
 
 def train_epoch(epoch, loader, iters, start_step=0, wandb=None, autocast_ctx=None):
@@ -96,7 +96,8 @@ if __name__ == "__main__":
     if args.use_compile == 1:
         model = torch.compile(model)
         Logger('torch.compile enabled')
-    train_ds = PretrainDataset(args.data_path, tokenizer, max_length=args.max_seq_len)
+    train_ds = SFTDataset(args.data_path, tokenizer, max_length=args.max_seq_len) if args.sft\
+         else PretrainDataset(args.data_path, tokenizer, max_length=args.max_seq_len)
     train_sampler = DistributedSampler(train_ds) if dist.is_initialized() else None
     scaler = torch.amp.GradScaler(device_type,enabled=(args.dtype == 'float16'))
     optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate)
