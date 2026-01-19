@@ -133,7 +133,7 @@ class SFTDataset(Dataset):
         super().__init__()
         self.tokenizer = tokenizer
         self.max_length = max_length
-        self.samples = JsonlDataset(data_files=jsonl_path, split='train')
+        self.samples = JsonlDataset(file_path=jsonl_path, split='train')
         self.bos_id = tokenizer(f'{tokenizer.bos_token}assistant\n', add_special_tokens=False).input_ids
         self.eos_id = tokenizer(f'{tokenizer.eos_token}\n', add_special_tokens=False).input_ids
 
@@ -180,3 +180,5 @@ class SFTDataset(Dataset):
         #     print(f"{i:3d}: X={self.tokenizer.decode([x])!r:16s} ---> Y={self.tokenizer.decode([input_ids[i+1]])!r:16s} label={y}")
         # # ================
         return torch.tensor(input_ids, dtype=torch.long), torch.tensor(labels, dtype=torch.long)
+    
+    

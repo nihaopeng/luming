@@ -371,6 +371,56 @@ class MiniMindForCausalLM(nn.Module):
         # Tie weights (optional but common)
         self.lm_head.weight = self.model.embed_tokens.weight
 
+    def generate(
+        model,
+        input_ids: torch.Tensor,
+        temperature: float = 1.0,
+        top_p: float = 1.0,
+        eos_token_id: Optional[int] = None,
+    ) -> torch.Tensor:
+        model.eval()
+        input_ids = input_ids.clone()
+
+        # 初始化 past_key_values 为 None
+        past_key_values = None
+
+        while True:
+            with torch.no_grad():
+                outputs = model(
+                    input_ids=input_ids if past_key_values is None else input_ids[:, -1:],  # 只传新 token
+                    past_key_values=past_key_values,
+                    use_cache=True
+                )
+            
+            logits = outputs.logits[:, -1, :]  # [1, vocab_size]
+            past_key_values = outputs.past_key_values  # 更新缓存
+
+            # Apply temperature
+            logits = logits / temperature
+
+            # Top-p (nucleus) sampling
+            if top_p < 1.0:
+                sorted_logits, sorted_indices = torch.sort(logits, descending=True)
+                cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
+                sorted_indices_to_remove = cumulative_probs > top_p
+                sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                sorted_indices_to_remove[..., 0] = 0
+                indices_to_remove = sorted_indices_to_remove.scatter(
+                    1, sorted_indices, sorted_indices_to_remove
+                )
+                logits[indices_to_remove] = -float('inf')
+
+            # Sample
+            probs = torch.softmax(logits, dim=-1)
+            next_token = torch.multinomial(probs, num_samples=1)  # [1, 1]
+            # Append
+            input_ids = torch.cat([input_ids, next_token], dim=-1)
+            # Early stopping
+            if eos_token_id is not None and next_token.item() == eos_token_id:
+                break
+        return input_ids
+        
+
     def forward(
         self,
         input_ids: Optional[torch.Tensor] = None,
