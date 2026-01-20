@@ -1,13 +1,4 @@
 # chat.py
-import argparse
-import os
-import time
-import torch
-from transformers import AutoTokenizer
-from config import MiniMindConfig
-from model_luming import MiniMindForCausalLM  # 假设你的模型定义在 model.py 中
-from utils import setup_seed
-
 def init_model(args):
     print("✅ 加载模型...")
     moe_suffix = '_moe' if args.use_moe else ''
@@ -39,8 +30,9 @@ def eval(args,prompts):
         if input_mode ==0: print(f'💬: {prompt}')
         st = time.time()
         response = ""
-        outputs_id = inputs["input_ids"].tolist() # [1,input_len]
-        out_text_len = len(prompt)
+        outputs_id = [[]] # [1,input_len]
+        out_text_len = 0
+        print(f"prompt:{prompt}")
         with torch.no_grad():
             if args.stream:
                 print(f'🤖: ',end="")
@@ -72,6 +64,15 @@ def eval(args,prompts):
         print(f'[Speed]: {gen_tokens / (time.time() - st):.2f} tokens/s\n') if args.show_speed else print('\n\n')
 
 if __name__ == "__main__":
+    print("✅ 正在加载依赖库...")
+    import argparse
+    import os
+    import time
+    import torch
+    from transformers import AutoTokenizer
+    from config import MiniMindConfig
+    from model_luming import MiniMindForCausalLM  # 假设你的模型定义在 model.py 中
+    from utils import setup_seed
     print("✅ 正在解析参数...")
     setup_seed(42)
     parser = argparse.ArgumentParser(description="MiniMind模型推理与对话")
@@ -94,12 +95,12 @@ if __name__ == "__main__":
     print("✅ 参数解析完成")
     prompts = [
         '你有什么特长？',
-        '为什么天空是蓝色的',
-        '请用Python写一个计算斐波那契数列的函数',
-        '解释一下"光合作用"的基本过程',
-        '如果明天下雨，我应该如何出门',
-        '比较一下猫和狗作为宠物的优缺点',
-        '解释什么是机器学习',
-        '推荐一些中国的美食'
+        '为什么天空是蓝色的？',
+        '请写一个计算斐波那契数列的函数',
+        '解释一下"光合作用"的基本过程。',
+        '如果明天下雨，我应该如何出门？',
+        '比较一下猫和狗作为宠物的优缺点。',
+        '解释什么是机器学习？',
+        '推荐一些中国的美食。'
     ]
     eval(args,prompts)
