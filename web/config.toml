@@ -1,0 +1,6 @@
+[DB]
+DB_NAME="./web/db.sqlite3"
+
+[LLM]
+TOKENIZER_PATH="./tokenizer/minimind"
+WEIGHT_PATH="./out"

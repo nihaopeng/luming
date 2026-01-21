@@ -82,7 +82,7 @@ if __name__ == "__main__":
     setup_seed(42 + (dist.get_rank() if dist.is_initialized() else 0))
 
     # ========== 2. 配置目录、模型参数、检查ckp ==========
-    os.makedirs(args.save_dir, exist_ok=True)
+    os.makedirs(os.path.dirname(args.save_weight), exist_ok=True)
     lm_config = MiniMindConfig(hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers, use_moe=bool(args.use_moe))
     ckp_data = lm_checkpoint(lm_config, weight=args.save_weight, save_dir='./checkpoints') if args.from_resume==1 else None
 
@@ -92,11 +92,11 @@ if __name__ == "__main__":
     autocast_ctx = nullcontext() if device_type == "cpu" else torch.amp.autocast(device_type,dtype=dtype)
     
     # ========== 5. 定义模型、数据、优化器 ==========
-    model, tokenizer = init_model(lm_config, args.from_weight, device=args.device)
+    model, tokenizer = init_model(lm_config, args.from_weight, device=args.device, tokenizer_path=args.tokenizer_path,from_weight=args.from_weight)
     if args.use_compile == 1:
         model = torch.compile(model)
         Logger('torch.compile enabled')
-    train_ds = SFTDataset(args.data_path, tokenizer, max_length=args.max_seq_len) if args.sft\
+    train_ds = SFTDataset(args.data_path, tokenizer, max_length=args.max_seq_len) if args.train_mode=="sft"\
          else PretrainDataset(args.data_path, tokenizer, max_length=args.max_seq_len)
     train_sampler = DistributedSampler(train_ds) if dist.is_initialized() else None
     scaler = torch.amp.GradScaler(device_type,enabled=(args.dtype == 'float16'))

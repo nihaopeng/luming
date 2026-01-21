@@ -10,7 +10,7 @@ def init_model(args):
     print("✅ 加载参数...")
     model.to(args.device).eval()
     print("✅ 加载编码器...")
-    tokenizer = AutoTokenizer.from_pretrained("./tokenizer", use_fast=False)
+    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path, use_fast=False)
     print("✅ 全部加载成功！开始对话（输入 'quit' 退出）")
     return model,tokenizer
 
@@ -76,7 +76,7 @@ if __name__ == "__main__":
     print("✅ 正在解析参数...")
     setup_seed(42)
     parser = argparse.ArgumentParser(description="MiniMind模型推理与对话")
-    parser.add_argument('--tokenizer_path', default='tokenizer', type=str, help="tokenizer数据加载路径")
+    parser.add_argument('--tokenizer_path', default='tokenizer/minimind', type=str, help="tokenizer数据加载路径")
     parser.add_argument('--save_dir', default='out', type=str, help="模型权重目录")
     parser.add_argument('--weight', default='sft', type=str, help="权重名称前缀")
     parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度（512=Small-26M, 640=MoE-145M, 768=Base-104M）")
