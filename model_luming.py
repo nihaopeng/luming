@@ -20,6 +20,9 @@ import math
 import torch.nn.init as init
 from torch import nn
 from typing import Optional, Tuple, List, Union
+
+from transformers import GenerationMixin, PreTrainedModel
+from transformers.modeling_outputs import CausalLMOutputWithPast
 from config import MiniMindConfig
 
 ACT2FN = {
@@ -350,165 +353,62 @@ class MiniMindModel(nn.Module):
         aux_loss = sum([l.mlp.aux_loss for l in self.layers if isinstance(l.mlp, MOEFeedForward)], hidden_states.new_zeros(1).squeeze())
         return hidden_states, presents, aux_loss
     
-@dataclass
-# dataclass 自动生成以下内容。
-# __init__(self, loss=None, logits=None, ...)
-# __repr__(self) → 打印时显示字段值（调试友好）
-# __eq__(self, other) → 按字段值比较是否相等
-# 还可选生成 __hash__、支持 frozen（不可变）等
-class CausalLMOutputWithPast:
-    loss: Optional[torch.Tensor] = None
-    logits: torch.Tensor = None
-    past_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None
-    aux_loss: Optional[torch.Tensor] = None  # 可选，用于 MoE
+class MiniMindForCausalLM(PreTrainedModel, GenerationMixin):
+    """
+    PreTrainedModel:
+        实现了 from_pretrained() 和 save_pretrained() 方法，支持从本地或 Hugging Face Hub 加载/保存模型权重和配置（如 config.json、pytorch_model.bin 或 model.safetensors）。
+        通过 self.config 访问模型的超参数（如层数、隐藏维度等），并与 PretrainedConfig 子类绑定。
+        提供统一的权重初始化逻辑（如 init_weights()），确保从头训练时参数合理初始化。
+        支持 .to(device)、.half() 等方法，并处理分布式训练（如 DataParallel）。
+        为 AutoModel 等自动类提供注册机制（需配合 config_class 和 base_model_prefix）。
+    GenerationMixin:
+        生成方法
+        实现了 generate() 方法，支持多种解码策略：
+            贪心搜索（greedy search）
+            束搜索（beam search）
+            采样（sampling）
+            Top-k / Top-p（nucleus）采样
+            对比解码（contrastive search）等
+        生成控制
+            支持 max_length、min_length、eos_token_id、pad_token_id 等生成参数。
+        高级功能
+            KV Cache（加速自回归生成）
+            Logits 处理（如 logits_processor、logits_warper）
+            生成过程中的回调（stopping_criteria）
+    """
+    config_class = MiniMindConfig
 
-class MiniMindForCausalLM(nn.Module):
-    def __init__(self, config: MiniMindConfig):
-        super().__init__()
-        self.config = config
-        self.model = MiniMindModel(config)
-        self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
-        # Tie weights (optional but common)
-        self.lm_head.weight = self.model.embed_tokens.weight
+    def __init__(self, config: MiniMindConfig = None):
+        self.config = config or MiniMindConfig()
+        super().__init__(self.config)
+        self.model = MiniMindModel(self.config)
+        self.lm_head = nn.Linear(self.config.hidden_size, self.config.vocab_size, bias=False)
+        self.model.embed_tokens.weight = self.lm_head.weight
 
-    def generate(
-        model,
-        input_ids: torch.Tensor,
-        temperature: float = 1.0,
-        attention_mask: Optional[torch.Tensor] = None,
-        top_p: float = 1.0,
-        eos_token_id: Optional[int] = None,
-    ) -> torch.Tensor:
-        model.eval()
-        input_ids = input_ids.clone()
-
-        # 初始化 past_key_values 为 None
-        past_key_values = None
-
-        while True:
-            with torch.no_grad():
-                outputs = model(
-                    input_ids=input_ids if past_key_values is None else input_ids[:, -1:],  # 只传新 token
-                    attention_mask=attention_mask,
-                    past_key_values=past_key_values,
-                    use_cache=True
-                )
-            
-            logits = outputs.logits[:, -1, :]  # [1, vocab_size]
-            past_key_values = outputs.past_key_values  # 更新缓存
-
-            # Apply temperature
-            logits = logits / temperature
-
-            # Top-p (nucleus) sampling
-            if top_p < 1.0:
-                sorted_logits, sorted_indices = torch.sort(logits, descending=True)
-                cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
-                sorted_indices_to_remove = cumulative_probs > top_p
-                sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
-                sorted_indices_to_remove[..., 0] = 0
-                indices_to_remove = sorted_indices_to_remove.scatter(
-                    1, sorted_indices, sorted_indices_to_remove
-                )
-                logits[indices_to_remove] = -float('inf')
-
-            # Sample
-            probs = torch.softmax(logits, dim=-1)
-            next_token = torch.multinomial(probs, num_samples=1)  # [1, 1]
-            # Append
-            input_ids = torch.cat([input_ids, next_token], dim=-1)
-            # Early stopping
-            if eos_token_id is not None and next_token.item() == eos_token_id:
-                break
-        return input_ids
-    
-    def generate_stream(
-        self,
-        input_ids: torch.Tensor,
-        temperature: float = 1.0,
-        attention_mask: Optional[torch.Tensor] = None,
-        top_p: float = 1.0,
-        eos_token_id: Optional[int] = None,
-        max_new_tokens: int = 1024,  # 防止无限生成
-    ):
-        """
-        流式生成 token，每次 yield 一个新生成的 token ID。
-        """
-        self.eval()
-        input_ids = input_ids.clone()
-        if attention_mask is None:
-            attention_mask = torch.ones_like(input_ids)
-        past_key_values = None
-        generated_count = 0
-        with torch.no_grad():
-            while generated_count < max_new_tokens:
-                # 只传入最后一个 token（利用 KV cache）
-                model_inputs = {
-                    "input_ids": input_ids if past_key_values is None else input_ids[:, -1:],
-                    "attention_mask": attention_mask,
-                    "past_key_values": past_key_values,
-                    "use_cache": True,
-                }
-                outputs = self(**model_inputs)
-                logits = outputs.logits[:, -1, :]  # [batch_size, vocab_size]
-                past_key_values = outputs.past_key_values
-                # Apply temperature
-                logits = logits / temperature
-                # Top-p sampling
-                if top_p < 1.0:
-                    sorted_logits, sorted_indices = torch.sort(logits, descending=True)
-                    cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
-                    sorted_indices_to_remove = cumulative_probs > top_p
-                    sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
-                    sorted_indices_to_remove[..., 0] = False  # 保留第一个（最大概率）
-                    indices_to_remove = sorted_indices_to_remove.scatter(
-                        1, sorted_indices, sorted_indices_to_remove
-                    )
-                    logits[indices_to_remove] = -float('inf')
-                probs = torch.softmax(logits, dim=-1)
-                next_token = torch.multinomial(probs, num_samples=1)  # [batch_size, 1]
-                # Yield the new token
-                yield next_token.item()  # 假设 batch_size=1；若需支持 batch，可 yield next_token
-                # Append to input
-                input_ids = torch.cat([input_ids, next_token], dim=-1)
-                attention_mask = torch.cat([attention_mask, torch.ones_like(next_token)], dim=-1)
-                # Stop on EOS
-                if eos_token_id is not None and next_token.item() == eos_token_id:
-                    break
-                generated_count += 1
-
-    def forward(
-        self,
-        input_ids: Optional[torch.Tensor] = None,
-        attention_mask: Optional[torch.Tensor] = None,
-        labels: Optional[torch.Tensor] = None,
-        past_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None,
-        use_cache: bool = False,
-        **kwargs
-    ) -> CausalLMOutputWithPast:
-        # 调用 base model
-        hidden_states, presents, aux_loss = self.model(
+    def forward(self,
+                input_ids: Optional[torch.Tensor] = None,
+                attention_mask: Optional[torch.Tensor] = None,
+                labels: Optional[torch.Tensor] = None,
+                past_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]] = None,
+                use_cache: bool = False,
+                logits_to_keep: Union[int, torch.Tensor] = 0,
+                **args):
+        hidden_states, past_key_values, aux_loss = self.model(
             input_ids=input_ids,
             attention_mask=attention_mask,
             past_key_values=past_key_values,
             use_cache=use_cache,
-            **kwargs
+            **args
         )
-
-        logits = self.lm_head(hidden_states)
+        slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
+        logits = self.lm_head(hidden_states[:, slice_indices, :])
 
         loss = None
         if labels is not None:
-            # Shift so that tokens < n predict n
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
-            # Flatten the tokens
-            loss_fct = nn.CrossEntropyLoss()
-            loss = loss_fct(shift_logits.view(-1, self.config.vocab_size), shift_labels.view(-1))
+            loss = F.cross_entropy(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1), ignore_index=-100)
 
-        return CausalLMOutputWithPast(
-            loss=loss,
-            logits=logits,
-            past_key_values=presents,
-            aux_loss=aux_loss
-        )
+        output = CausalLMOutputWithPast(loss=loss, logits=logits, past_key_values=past_key_values, hidden_states=hidden_states)
+        output.aux_loss = aux_loss
+        return output

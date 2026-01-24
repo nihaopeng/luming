@@ -11,8 +11,12 @@
 # limitations under the License.
 
 # Modifications Copyright 2026 Yutao Peng, Northeastern University, liaoning, China
+from transformers import PretrainedConfig
 
-class MiniMindConfig():
+class MiniMindConfig(PretrainedConfig):
+    """
+    使用PretrainedConfig是为了后续使用transformer库自动加载
+    """
     model_type = "minimind"
 
     def __init__(

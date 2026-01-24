@@ -2,3 +2,4 @@ dataset/
 out/
 __pycache__/
 *.log
+tmp*

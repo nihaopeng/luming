@@ -1,84 +1,99 @@
-# chat.py
+print("✅ 正在加载依赖库...")
+import argparse
+import time
+import torch
+from utils import TokenConfig, setup_seed, Logger
+from transformers import AutoTokenizer,AutoModelForCausalLM
+
 def init_model(args):
-    print("✅ 加载模型...")
-    moe_suffix = '_moe' if args.use_moe else ''
-    ckpt_path = os.path.join(args.save_dir, f"{args.weight}_{args.hidden_size}{moe_suffix}.pth")
-    config = MiniMindConfig(hidden_size=args.hidden_size, num_hidden_layers=args.num_hidden_layers, use_moe=args.use_moe)
-    model = MiniMindForCausalLM(config)
-    state_dict = torch.load(ckpt_path, map_location=args.device)
-    model.load_state_dict(state_dict)
-    print("✅ 加载参数...")
-    model.to(args.device).eval()
-    print("✅ 加载编码器...")
-    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path, use_fast=False)
-    print("✅ 全部加载成功！开始对话（输入 'quit' 退出）")
-    return model,tokenizer
+    Logger("✅ 加载模型...")
+    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path)
+    Logger("✅ 加载参数...")
+    model = AutoModelForCausalLM.from_pretrained(
+        args.from_weight,  # 或本地路径包含 model.safetensors
+    )
+    Logger("✅ 全部加载成功！")
+    Logger(f'Trainable Params: {sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e6:.3f}M')
+    return model.to(args.device), tokenizer
+
+class miniStreamer:
+    def __init__(self,args,tokenizer):
+        self.args = args
+        self.tokenizer = tokenizer
+        self.output_ids = []
+        self.output_text_idx = 0
+        self.response = ""
+        print(f'🤖: ',end="")
+    
+    def put(self, value):
+        text = ""
+        ids = []
+        if hasattr(value, 'tolist'):
+            ids = value.tolist()
+        if isinstance(ids, list) and len(ids) > 0 and isinstance(ids[0], list):
+            ids = ids[0]
+        else:
+            ids = ids
+        self.output_ids.extend(ids)
+        text = self.tokenizer.decode(self.output_ids, skip_special_tokens=True)
+        if self.args.stream and self.output_text_idx < len(self.response)-3:
+            print(self.response[self.output_text_idx], end='', flush=True)
+            self.output_text_idx += 1
+        self.response = text
+    
+    def end(self):
+        # 根据 stream 开关决定是否输出
+        if self.args.stream:
+            print(self.response[self.output_text_idx+1:])  # 流式模式：结束时换行
+        else:
+            print(f'{self.response}')  # 非流式：一次性输出完整 response
+        self.output_ids = []
+        self.output_text_idx = 0
+        self.response = ""
+        print(f'🤖: ',end="")
 
 def eval(args,prompts):
     model,tokenizer = init_model(args)
+    sep = args.sep.split(",")
+    print(sep)
+    assert len(sep)==3,"sep参数需要三个token，用逗号分隔"
+    token_config = TokenConfig(sep[0],sep[1],sep[2])
     input_mode = int(input('[0] 自动测试 [1] 手动输入 : '))
     prompt_iter = prompts if input_mode == 0 else iter(lambda: input('💬: '), '')
     
     conversation = []
+    streamer = miniStreamer(args,tokenizer)
+    prompt_iter = prompts if input_mode == 0 else iter(lambda: input('💬: '), '')
     for prompt in prompt_iter:
+        if prompt == "quit" or "exit": break
+        setup_seed(2026) # or setup_seed(random.randint(0, 2048))
+        if input_mode == 0: print(f'💬: {prompt}')
         conversation = conversation[-args.historys:] if args.historys else []
         conversation.append({"role": "user", "content": prompt})
+
         templates = {"conversation": conversation, "tokenize": False, "add_generation_prompt": True}
-        # 使用tokenizer_config中的chat_template构造输入prompt
-        inputs = tokenizer.apply_chat_template(**templates) if args.eval_mode == "sft" else tokenizer.bos_token + prompt
-        inputs = tokenizer(inputs, return_tensors="pt").to(args.device)
-        if input_mode ==0: print(f'💬: {prompt}')
+        inputs = tokenizer.apply_chat_template(**templates) if args.eval_mode=="sft" else token_config.response_start_token + prompt
+        inputs = tokenizer(inputs, return_tensors="pt", truncation=True).to(args.device)
+
         st = time.time()
-        response = ""
-        outputs_id = [[]] # [1,input_len]
-        out_text_len = 0
-        print(f"prompt:{prompt}")
-        with torch.no_grad():
-            if args.stream:
-                print(f'🤖: ',end="")
-                for token_id in model.generate_stream(
-                    inputs["input_ids"],
-                    temperature=0.7,
-                    top_p=0.9,
-                    eos_token_id=tokenizer.eos_token_id
-                ):
-                    outputs_id[0].append(token_id)
-                    # ✅ 关键：decode 整个序列，不是单个 token
-                    response = tokenizer.decode(outputs_id[0], skip_special_tokens=True)
-                    # 只输出倒数第三个字符，避免新输出token由于不完整导致乱码。
-                    print(response[out_text_len:-3], end="", flush=True)
-                    out_text_len = out_text_len + len(response[out_text_len:-3])
-                print(response[-3:], end="", flush=True)
-            else:
-                outputs_id = model.generate(
-                    input_ids=inputs["input_ids"],
-                    # attention_mask=inputs["attention_mask"],
-                    temperature=0.7,
-                    top_p=0.9,
-                    eos_token_id=tokenizer.eos_token_id  # 关键：用 <|im_end|> 作为结束符
-                )
-                response = tokenizer.decode(outputs_id[0][len(inputs["input_ids"][0]):], skip_special_tokens=True)
-                print(f'🤖: {response}')
-        conversation.append({"role": "assistant", "content": response})
-        gen_tokens = len(outputs_id[0]) - len(inputs["input_ids"][0])
-        print(f'[Speed]: {gen_tokens / (time.time() - st):.2f} tokens/s\n') if args.show_speed else print('\n\n')
+        generated_ids = model.generate(
+            inputs=inputs.input_ids, attention_mask=inputs.attention_mask,
+            max_new_tokens=1024, streamer=streamer,
+            pad_token_id=tokenizer.convert_tokens_to_ids(token_config.pad_token),
+            eos_token_id=tokenizer.convert_tokens_to_ids(token_config.response_end_token),
+            top_p=args.top_p, temperature=args.temperature
+        )
+        conversation.append({"role": "assistant", "content": streamer.response})
+        gen_tokens = len(generated_ids[0]) - len(inputs["input_ids"][0])
+        print(f'\n[Speed]: {gen_tokens / (time.time() - st):.2f} tokens/s\n\n') if args.show_speed else print('\n\n')
 
 if __name__ == "__main__":
-    print("✅ 正在加载依赖库...")
-    import argparse
-    import os
-    import time
-    import torch
-    from transformers import AutoTokenizer
-    from config import MiniMindConfig
-    from model_luming import MiniMindForCausalLM  # 假设你的模型定义在 model.py 中
-    from utils import setup_seed
+    
     print("✅ 正在解析参数...")
     setup_seed(42)
     parser = argparse.ArgumentParser(description="MiniMind模型推理与对话")
     parser.add_argument('--tokenizer_path', default='tokenizer/minimind', type=str, help="tokenizer数据加载路径")
-    parser.add_argument('--save_dir', default='out', type=str, help="模型权重目录")
-    parser.add_argument('--weight', default='sft', type=str, help="权重名称前缀")
+    parser.add_argument('--from_weight', default='sft', type=str, help="权重路径，包含文件名")
     parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度（512=Small-26M, 640=MoE-145M, 768=Base-104M）")
     parser.add_argument('--num_hidden_layers', default=16, type=int, help="隐藏层数量（Small/MoE=8, Base=16）")
     parser.add_argument('--use_moe', default=0, type=int, choices=[0, 1], help="是否使用MoE架构（0=否，1=是）")
@@ -86,14 +101,16 @@ if __name__ == "__main__":
     parser.add_argument('--max_new_tokens', default=256, type=int, help="最大生成长度（注意：并非模型实际长文本能力）")
     parser.add_argument('--temperature', default=0.85, type=float, help="生成温度，控制随机性（0-1，越大越随机）")
     parser.add_argument('--top_p', default=0.85, type=float, help="nucleus采样阈值（0-1）")
-    parser.add_argument('--historys', default=3, type=int, help="携带历史对话轮数（需为偶数，0表示不携带历史）")
+    parser.add_argument('--historys', default=0, type=int, help="携带历史对话轮数（需为偶数，0表示不携带历史）")
     parser.add_argument('--show_speed', default=1, type=int, help="显示decode速度（tokens/s）")
+    parser.add_argument("--sep", type=str, default="<|im_start|>assistant,<|im_end|>,<|endoftext|>", help="微调使用的起始token，结束token和填充token")
     parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu', type=str, help="运行设备")
     parser.add_argument('--eval_mode', default='pretrain', type=str, choices=["pretrain","sft"], help="测试类型[pretrain/sft]")
     parser.add_argument('--stream', default=0, type=int, choices=[0,1], help="是否流式输出?(是/否)[1]/[0]")
     args = parser.parse_args()
     print("✅ 参数解析完成")
     prompts = [
+        'who are you?',
         '你有什么特长？',
         '为什么天空是蓝色的？',
         '请写一个计算斐波那契数列的函数',

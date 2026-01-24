@@ -19,6 +19,8 @@ import re
 from pathlib import Path
 from torch.utils.data import Dataset
 
+from utils import TokenConfig
+
 class JsonlDataset(Dataset):
     def __init__(self, file_path: str, split: str = "train"):
         """
@@ -104,9 +106,10 @@ class JsonlDataset(Dataset):
             return json.loads(line)
 
 class PretrainDataset(Dataset):
-    def __init__(self, data_path, tokenizer, max_length=512):
+    def __init__(self, data_path, tokenizer, token_config:TokenConfig, max_length=512):
         super().__init__()
         self.tokenizer = tokenizer
+        self.token_config = token_config
         self.max_length = max_length
         self.samples = JsonlDataset(file_path=data_path, split='train') # split = [0:100]/[:x%]/[-100:]
 
@@ -124,18 +127,19 @@ class PretrainDataset(Dataset):
         )
         input_ids = encoding.input_ids.squeeze()
         labels = input_ids.clone()
-        labels[input_ids == self.tokenizer.pad_token_id] = -100
+        labels[input_ids == self.tokenizer.convert_tokens_to_ids(self.token_config.pad_token)] = -100
         return input_ids, labels
 
 
 class SFTDataset(Dataset):
-    def __init__(self, jsonl_path, tokenizer, max_length=1024):
+    def __init__(self, jsonl_path, tokenizer, token_config:TokenConfig, max_length=1024):
         super().__init__()
         self.tokenizer = tokenizer
         self.max_length = max_length
+        self.token_config = token_config
         self.samples = JsonlDataset(file_path=jsonl_path, split='train')
-        self.bos_id = tokenizer(f'{tokenizer.bos_token}assistant\n', add_special_tokens=False).input_ids
-        self.eos_id = tokenizer(f'{tokenizer.eos_token}\n', add_special_tokens=False).input_ids
+        self.bos_id = tokenizer(f'{self.token_config.response_start_token}\n', add_special_tokens=False).input_ids
+        self.eos_id = tokenizer(f'{self.token_config.response_end_token}\n', add_special_tokens=False).input_ids
 
     def __len__(self):
         return len(self.samples)
@@ -147,7 +151,8 @@ class SFTDataset(Dataset):
             messages,
             tokenize=False,
             add_generation_prompt=False,
-            tools=tools
+            tools=tools,
+            enable_thinking=False
         )
 
     def generate_labels(self, input_ids):
@@ -172,7 +177,7 @@ class SFTDataset(Dataset):
         sample = self.samples[index]
         prompt = self.create_chat_prompt(sample['conversations'])
         input_ids = self.tokenizer(prompt).input_ids[:self.max_length]
-        input_ids += [self.tokenizer.pad_token_id] * (self.max_length - len(input_ids))
+        input_ids += [self.tokenizer.convert_tokens_to_ids(self.token_config.pad_token)] * (self.max_length - len(input_ids))
         labels = self.generate_labels(input_ids)
         # # === 调试打印 ===
         # print(f"\n--- Sample {index} ---")
