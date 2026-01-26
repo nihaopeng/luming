@@ -45,13 +45,13 @@ def get_args():
     parser.add_argument('--tokenizer_path', required=True, type=str, help="tokenzier保存路径")
     parser.add_argument("--epochs", type=int, default=6, help="训练轮数（建议1轮zero或2-6轮充分训练）")
     parser.add_argument("--batch_size", type=int, default=16, help="batch size")
-    parser.add_argument("--learning_rate", type=float, default=5e-4, help="初始学习率")
+    parser.add_argument("--learning_rate", type=float, default=2e-5, help="初始学习率")
     parser.add_argument("--device", type=str, default="cuda:0" if torch.cuda.is_available() else "cpu", help="训练设备")
     parser.add_argument("--dtype", type=str, default="bfloat16", help="混合精度类型")
     parser.add_argument("--num_workers", type=int, default=8, help="数据加载线程数")
     parser.add_argument("--accumulation_steps", type=int, default=8, help="梯度累积步数")
     parser.add_argument("--grad_clip", type=float, default=1.0, help="梯度裁剪阈值")
-    parser.add_argument("--log_interval", type=int, default=100, help="日志打印间隔")
+    parser.add_argument("--log_interval", type=int, default=5, help="日志打印间隔")
     parser.add_argument("--save_interval", type=int, default=1000, help="模型保存间隔")
     parser.add_argument('--hidden_size', default=768, type=int, help="隐藏层维度")
     parser.add_argument('--num_hidden_layers', default=16, type=int, help="隐藏层数量")
@@ -176,8 +176,16 @@ def init_model(args):
     Logger(f'Trainable Params: {sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e6:.3f}M')
     return model.to(args.device), tokenizer
 
-def get_lr(current_step, total_steps, lr):
-    return lr*(0.1 + 0.45*(1 + math.cos(math.pi * current_step / total_steps)))
+def get_lr(current_step, total_steps, base_lr=2e-5):
+    # 10%热身
+    warmup_steps = int(total_steps * 0.1)
+    
+    if current_step < warmup_steps:
+        return base_lr * (current_step / warmup_steps)
+    
+    progress = (current_step - warmup_steps) / (total_steps - warmup_steps)
+    # 你的余弦衰减
+    return base_lr * (0.1 + 0.45 * (1 + math.cos(math.pi * progress)))
 
 def is_main_process():
     return not dist.is_initialized() or dist.get_rank() == 0

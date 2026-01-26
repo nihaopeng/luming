@@ -156,6 +156,9 @@ class SFTDataset(Dataset):
         )
 
     def generate_labels(self, input_ids):
+        """
+        同时训练格式和内容
+        """
         labels = [-100] * len(input_ids)
         i = 0
         while i < len(input_ids):
@@ -172,6 +175,37 @@ class SFTDataset(Dataset):
             else:
                 i += 1
         return labels
+
+    # def generate_labels(self, input_ids):
+    #     """
+    #     仅训练格式而不训练内容
+    #     """
+    #     labels = [-100] * len(input_ids)
+    #     i = 0
+    #     while i < len(input_ids):
+    #         # 检查是否匹配 assistant 的开始标记
+    #         if i + len(self.bos_id) <= len(input_ids) and input_ids[i:i + len(self.bos_id)] == self.bos_id:
+    #             # 保留 bos_id（即 "<|im_start|>assistant\n"）的 label
+    #             for j in range(i, min(i + len(self.bos_id), len(input_ids))):
+    #                 labels[j] = input_ids[j]
+                
+    #             # 跳过中间的回答内容（不设 label）
+    #             # 寻找 eos_id
+    #             end = i + len(self.bos_id)
+    #             while end + len(self.eos_id) <= len(input_ids):
+    #                 if input_ids[end:end + len(self.eos_id)] == self.eos_id:
+    #                     # 保留 eos_id（即 "<|im_end|>\n"）的 label
+    #                     for j in range(end, min(end + len(self.eos_id), len(input_ids))):
+    #                         labels[j] = input_ids[j]
+    #                     i = end + len(self.eos_id)
+    #                     break
+    #                 end += 1
+    #             else:
+    #                 # 未找到 eos，跳到末尾
+    #                 i = len(input_ids)
+    #         else:
+    #             i += 1
+    #     return labels
 
     def __getitem__(self, index):
         sample = self.samples[index]

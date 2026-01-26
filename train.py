@@ -13,6 +13,7 @@
 # Modifications Copyright 2026 Yutao Peng, Northeastern University, liaoning, China
 
 import os
+import sys
 import time
 import torch
 import torch.distributed as dist
@@ -40,12 +41,21 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None, autocast_ctx=Non
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
 
+        # PyTorch 自动混合精度（Automatic Mixed Precision, AMP） 的上下文管理器，用于在训练过程中自动选择 float16（半精度）或 float32（单精度）进行计算，从而在保持模型精度的同时显著提升训练速度并减少显存占用。
         with autocast_ctx:
             res = model(input_ids, labels=labels)
             loss = res.loss
             if hasattr(res, 'aux_loss') and res.aux_loss is not None:
                 loss = loss + res.aux_loss
             loss = loss / args.accumulation_steps
+            # 判断是否NaN，如果出现NaN则提前终止训练。
+            if not torch.isfinite(loss):
+                Logger("Saving last good checkpoint before exit...")
+                raw_model = model.module if hasattr(model, 'module') else model
+                raw_model = getattr(raw_model, '_orig_mod', raw_model)
+                raw_model.save_pretrained(args.save_weight, safe_serialization=True)
+                Logger("!quit train!")
+                sys.exit(1)
 
         scaler.scale(loss).backward()
 
@@ -97,7 +107,7 @@ if __name__ == "__main__":
     autocast_ctx = nullcontext() if device_type == "cpu" else torch.amp.autocast(device_type,dtype=dtype)
     
     # ========== 5. 定义模型、数据、优化器 ==========
-    model, tokenizer = init_model(args,args.train_mode)
+    model, tokenizer = init_model(args)
     if args.use_compile == 1:
         model = torch.compile(model)
         Logger('torch.compile enabled')
@@ -109,7 +119,7 @@ if __name__ == "__main__":
     train_sampler = DistributedSampler(train_ds) if dist.is_initialized() else None
     scaler = torch.amp.GradScaler(device_type,enabled= args.dtype != 'bfloat16')
     optimizer = optim.AdamW(model.parameters(), lr=args.learning_rate)
-        
+    
     # ========== 7. DDP包模型 ==========
     if dist.is_initialized():
         model._ddp_params_and_buffers_to_ignore = {"freqs_cos", "freqs_sin"}# 忽略这两个buffer的同步，这个没有梯度，所以没必要同步
@@ -119,14 +129,14 @@ if __name__ == "__main__":
     start_epoch, start_step = 0, 0
     for epoch in range(start_epoch, args.epochs):
         train_sampler and train_sampler.set_epoch(epoch)
-        if epoch == start_epoch and start_step > 0: # 第一个epoch且存在检查点
-            batch_sampler = SkipBatchSampler(train_sampler or range(len(train_ds)), args.batch_size, start_step + 1)
-            loader = DataLoader(train_ds, batch_sampler=batch_sampler, num_workers=args.num_workers, pin_memory=True)
-            Logger(f'Epoch [{epoch + 1}/{args.epochs}]: 跳过前{start_step}个step，从step {start_step + 1}开始')
-            train_epoch(epoch, loader, iters=len(loader) + start_step + 1, start_step=start_step,autocast_ctx=autocast_ctx)
-        else: # 默认从头开始
-            loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=(train_sampler is None), sampler=train_sampler, num_workers=args.num_workers, pin_memory=True)
-            train_epoch(epoch, loader, iters=len(loader), start_step=0, autocast_ctx=autocast_ctx)
+        # if epoch == start_epoch and start_step > 0: # 第一个epoch且存在检查点
+        #     batch_sampler = SkipBatchSampler(train_sampler or range(len(train_ds)), args.batch_size, start_step + 1)
+        #     loader = DataLoader(train_ds, batch_sampler=batch_sampler, num_workers=args.num_workers, pin_memory=True)
+        #     Logger(f'Epoch [{epoch + 1}/{args.epochs}]: 跳过前{start_step}个step，从step {start_step + 1}开始')
+        #     train_epoch(epoch, loader, iters=len(loader) + start_step + 1, start_step=start_step,autocast_ctx=autocast_ctx)
+        # else: # 默认从头开始
+        loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=(train_sampler is None), sampler=train_sampler, num_workers=args.num_workers, pin_memory=True)
+        train_epoch(epoch, loader, iters=len(loader), start_step=0, autocast_ctx=autocast_ctx)
     
     # ========== 9. 清理分布进程 ==========
     if dist.is_initialized(): dist.destroy_process_group()

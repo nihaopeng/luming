@@ -1,43 +1,42 @@
 # luming - 轻量级语言模型训练框架
 
-luming 是一个简洁高效的语言模型训练和推理框架, 主要参考[minimind](https://github.com/jingyaogong/minimind)项目（大部分代码是直接迁移的），专为快速入门和实践语言模型而设计。支持预训练、指令微调(SFT)、评估和部署的完整生命周期。
+luming 是一个简洁高效的语言模型训练和推理框架, 主要参考[minimind](https://github.com/jingyaogong/minimind)项目（大部分代码是直接迁移的），专为快速入门和实践语言模型而设计。支持预训练、指令微调(SFT)、评估和部署的完整生命周期。支持qwen0.6B微调与评测。
 
 ## 🚀 快速开始
 
 ### 1. 预训练
-```bash
-# 从头开始预训练 Small-26M 模型
-./run.sh pretrain
 
-# 预训练 Base-104M 模型
-python train.py --hidden_size 768 --num_hidden_layers 16 --save_weight pretrain
+从头开始预训练 minimind-104M 模型
+```bash
+CUDA_VISIBLE_DEVICES=1 python train.py --dtype=float16 --data_path "./dataset/pretrain_hq.jsonl" --save_weight "./out/minimind_pretrain" --from_weight "none" --hidden_size 768 --num_hidden_layers 16 --use_compile 1 --epochs 6 --sep "<|im_start|>,<|im_end|>,<|endoftext|>"
 ```
 
 ### 2. 指令微调 (SFT)
-```bash
-# 基于预训练权重进行指令微调
-./run.sh sft
 
-# 手动指定参数微调
-python train.py --from_weight pretrain --sft 1 --hidden_size 512 --num_hidden_layers 8
+基于minimind-104M预训练模型微调，使用[sft_mini_512](https://www.modelscope.cn/datasets/gongjy/minimind_dataset/files)数据集
+```bash
+CUDA_VISIBLE_DEVICES=1 python train.py --dtype=float16 --data_path "./dataset/sft_mini_512.jsonl" --tokenizer_path "./tokenizer/minimind" --train_mode "sft" --save_weight "./out/minimind_sft" --from_weight "./out/minimind_pretrain" --hidden_size 768 --num_hidden_layers 16 --use_compile 0 --epochs 2 --sep "<|im_start|>assistant,<|im_end|>,<|endoftext|>"
+```
+
+基于qwen0.6B模型微调，使用[sft_mini_512](https://www.modelscope.cn/datasets/gongjy/minimind_dataset/files)数据集
+```bash
+CUDA_VISIBLE_DEVICES=1 python train.py --dtype=float16 --data_path "./dataset/sft_mini_512.jsonl" --tokenizer_path "./tokenizer/qwen0.6Bbase" --train_mode "sft" --save_weight "./out/qwen_sft" --from_weight "./out/qwen0.6Bbase" --use_compile 0 --epochs 2 --sep "<|im_start|>assistant,<|im_end|>,<|endoftext|>"
 ```
 
 ### 3. 推理测试
 ```bash
-# 交互式对话
-./run.sh eval
+# pretrain minimind eval
+CUDA_VISIBLE_DEVICES=2 python eval.py --tokenizer_path "./tokenizer/minimind" --from_weight "./out/minimind_pretrain" --sep "<|im_start|>,<|im_end|>,<|endoftext|>" --eval_mode "pretrain" --stream 1
 
-# 流式输出
-python eval.py --weight sft --stream 1 --eval_mode sft
+# pretrain qwen0.6B eval
+CUDA_VISIBLE_DEVICES=2 python eval.py --tokenizer_path "./tokenizer/qwen0.6Bbase" --from_weight "./out/qwen0.6Bbase" --sep "<|im_start|>,<|im_end|>,<|endoftext|>" --eval_mode "pretrain" --stream 0
+
+# sft minimind eval
+CUDA_VISIBLE_DEVICES=2 python eval.py --tokenizer_path "./tokenizer/qwen0.6Bbase" --from_weight "./out/qwen_sft" --sep "<|im_start|>assistant,<|im_end|>,<|endoftext|>" --eval_mode "sft" --stream 1
+
+# sft qwen0.6B eval
+CUDA_VISIBLE_DEVICES=2 python eval.py --tokenizer_path "./tokenizer/qwen0.6Bbase" --from_weight "./out/qwen_sft" --sep "<|im_start|>assistant,<|im_end|>,<|endoftext|>" --eval_mode "sft" --stream 1
 ```
-
-## 📊 模型规格
-
-| 模型 | hidden_size | num_hidden_layers | 参数量 | 适用场景 |
-|------|-------------|-------------------|--------|----------|
-| Small-26M | 512 | 8 | ~26M | 快速实验、学习 |
-| Base-104M | 768 | 16 | ~104M | 基础应用 |
-| MoE-145M | 640 | 8 | ~145M | 高效推理 | luming:24-28 
 
 ## 🏗️ 核心架构
 
@@ -45,11 +44,6 @@ python eval.py --weight sft --stream 1 --eval_mode sft
 - **MiniMindForCausalLM**: 主要模型类，包含语言建模头 luming:365-373 
 - **Attention**: 多头注意力机制，支持 RoPE 位置编码 luming:82-145 
 - **FeedForward/MOEFeedForward**: 前馈网络，支持 MoE 架构 luming:147-278 
-
-### 训练系统
-- **分布式训练**: 支持 DDP 多 GPU 训练 luming:115-117 
-- **混合精度**: 自动混合精度训练，节省显存 luming:89-92 
-- **检查点管理**: 自动保存和恢复训练状态 luming:66-119 
 
 ## 📁 项目结构
 
@@ -81,20 +75,6 @@ python eval.py --weight sft --stream 1 --eval_mode sft
 - **KV缓存**: 加速生成过程 luming:386-398 
 - **流式生成**: 实时输出生成内容 luming:425-478 
 - **采样策略**: 支持温度调节和 nucleus sampling luming:400-413 
-
-## 🛠️ 使用示例
-
-### 自定义训练
-```bash
-python train.py \
-    --hidden_size 512 \
-    --num_hidden_layers 8 \
-    --batch_size 32 \
-    --learning_rate 5e-4 \
-    --epochs 6 \
-    --data_path ./dataset/pretrain_hq.jsonl \
-    --save_weight my_model
-```
 
 ### 模型推理
 ```python

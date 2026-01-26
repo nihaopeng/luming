@@ -23,17 +23,14 @@ class miniStreamer:
         self.output_ids = []
         self.output_text_idx = 0
         self.response = ""
-        print(f'🤖: ',end="")
+        self.is_first_output = True
     
     def put(self, value):
-        text = ""
-        ids = []
-        if hasattr(value, 'tolist'):
-            ids = value.tolist()
-        if isinstance(ids, list) and len(ids) > 0 and isinstance(ids[0], list):
-            ids = ids[0]
-        else:
-            ids = ids
+        ids = value.tolist()
+        if self.is_first_output:
+            print(f'🤖: ',end="")
+            self.is_first_output = False
+            ids = [ids[0][-1]] # 第一次会将prompt也传进来，此时取最后一个token即可。
         self.output_ids.extend(ids)
         text = self.tokenizer.decode(self.output_ids, skip_special_tokens=True)
         if self.args.stream and self.output_text_idx < len(self.response)-3:
@@ -50,7 +47,7 @@ class miniStreamer:
         self.output_ids = []
         self.output_text_idx = 0
         self.response = ""
-        print(f'🤖: ',end="")
+        self.is_first_output = True
 
 def eval(args,prompts):
     model,tokenizer = init_model(args)
@@ -65,7 +62,7 @@ def eval(args,prompts):
     streamer = miniStreamer(args,tokenizer)
     prompt_iter = prompts if input_mode == 0 else iter(lambda: input('💬: '), '')
     for prompt in prompt_iter:
-        if prompt == "quit" or "exit": break
+        if prompt == "quit" or prompt == "exit": break
         setup_seed(2026) # or setup_seed(random.randint(0, 2048))
         if input_mode == 0: print(f'💬: {prompt}')
         conversation = conversation[-args.historys:] if args.historys else []
@@ -78,7 +75,7 @@ def eval(args,prompts):
         st = time.time()
         generated_ids = model.generate(
             inputs=inputs.input_ids, attention_mask=inputs.attention_mask,
-            max_new_tokens=1024, streamer=streamer,
+            max_new_tokens=args.max_seq_len, streamer=streamer,
             pad_token_id=tokenizer.convert_tokens_to_ids(token_config.pad_token),
             eos_token_id=tokenizer.convert_tokens_to_ids(token_config.response_end_token),
             top_p=args.top_p, temperature=args.temperature
@@ -107,10 +104,10 @@ if __name__ == "__main__":
     parser.add_argument('--device', default='cuda' if torch.cuda.is_available() else 'cpu', type=str, help="运行设备")
     parser.add_argument('--eval_mode', default='pretrain', type=str, choices=["pretrain","sft"], help="测试类型[pretrain/sft]")
     parser.add_argument('--stream', default=0, type=int, choices=[0,1], help="是否流式输出?(是/否)[1]/[0]")
+    parser.add_argument('--max_seq_len', default=340, type=int, help="训练的最大截断长度（中文1token≈1.5~1.7字符）")
     args = parser.parse_args()
     print("✅ 参数解析完成")
     prompts = [
-        'who are you?',
         '你有什么特长？',
         '为什么天空是蓝色的？',
         '请写一个计算斐波那契数列的函数',

@@ -9,7 +9,7 @@ import torch
 from transformers import AutoTokenizer
 from web.core.config import configuration
 from config import MiniMindConfig
-from model_luming import MiniMindForCausalLM
+from ...model_luming import MiniMindForCausalLM
 
 parser = argparse.ArgumentParser(description="MiniMind模型推理与对话")
 parser.add_argument('--tokenizer_path', default=configuration["LLM"]["TOKENIZER_PATH"], type=str, help="tokenizer数据加载路径")
