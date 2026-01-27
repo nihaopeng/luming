@@ -2,5 +2,9 @@
 DB_NAME="./web/db.sqlite3"
 
 [LLM]
-TOKENIZER_PATH="./tokenizer/minimind"
-WEIGHT_PATH="./out"
+TOKENIZER_PATH="./tokenizer/qwen0.6Bbase"
+FROM_WEIGHT="./out/qwen_sft_multichat"
+DEVICE="cuda"
+HISTORYS=0
+SEP="<|im_start|>assistant,<|im_end|>,<|endoftext|>"
+MAX_SEQ_LEN=340

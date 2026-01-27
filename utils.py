@@ -37,7 +37,7 @@ def Logger(content):
         filename = frame.f_code.co_filename.split("/")[-1]  # 只保留文件名
         lineno = frame.f_lineno
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        print(f"[{timestamp}] {filename}:{lineno} - {content}")
+        print(f"[{timestamp}] {filename}:{lineno} - {content}",flush=True)
 
 def get_args():
     parser = argparse.ArgumentParser(description="MiniMind Pretraining")

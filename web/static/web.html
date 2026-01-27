@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>MiniMind Chat</title>
+  <title>LuMing</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -45,6 +45,7 @@
       overflow-y: auto;
       margin-bottom: 16px;
       box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      position: relative;
     }
     .message {
       padding: 8px 0;
@@ -52,6 +53,19 @@
     }
     .user { color: #1d4ed8; font-weight: bold; }
     .bot { color: #374151; }
+
+    /* 加载动画样式 */
+    .loading {
+      display: none;
+      text-align: center;
+      color: #6b7280;
+      font-style: italic;
+      padding: 20px 0;
+    }
+    .loading.active {
+      display: block;
+    }
+
     .input-area {
       display: flex;
       gap: 8px;
@@ -73,29 +87,41 @@
     }
     button:hover { background: #4338ca; }
     button:disabled { background: #9ca3af; cursor: not-allowed; }
+    #clear-btn {
+      background: #ef4444;
+    }
+    #clear-btn:hover {
+      background: #dc2626;
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <header>
-      <div class="logo-placeholder">LOGO</div>
-      <h1>MiniMind Chat</h1>
+      <div class="logo-placeholder">LuMing</div>
+      <h1>LuMing</h1>
     </header>
 
-    <div id="chat-box"></div>
+    <div id="chat-box">
+      <!-- 加载动画占位 -->
+      <div class="loading" id="loading-indicator">正在加载聊天记录...</div>
+    </div>
 
     <div class="input-area">
       <input type="text" id="user-input" placeholder="输入消息..." />
       <button id="send-btn">发送</button>
+      <button id="clear-btn">清空聊天</button>
     </div>
   </div>
 
   <script>
     const chatBox = document.getElementById('chat-box');
+    const loadingIndicator = document.getElementById('loading-indicator');
     const userInput = document.getElementById('user-input');
     const sendBtn = document.getElementById('send-btn');
+    const clearBtn = document.getElementById('clear-btn');
     
-    let username = ""
+    let username = "";
     let conversation = [];
 
     function addMessage(sender, text, isStreaming = false) {
@@ -107,46 +133,61 @@
     }
 
     async function login() {
-        username = prompt("请输入用户名：") || "anonymous";
+      username = prompt("请输入用户名：") || "anonymous";
+
+      // 显示加载动画
+      chatBox.innerHTML = ''; // 清空之前的内容
+      loadingIndicator.classList.add('active');
+      chatBox.appendChild(loadingIndicator);
+
+      try {
         const res = await fetch('/users/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username })
         });
         const data = await res.json();
-        
-        // 清空聊天框
-        chatBox.innerHTML = '';
+
+        // 模拟轻微延迟（可选，实际不需要）
+        // await new Promise(r => setTimeout(r, 500));
+
+        // 清空并准备渲染
         conversation = [];
-      
-        // 如果有历史记录，回溯显示
+        chatBox.innerHTML = '';
+        
+        // 隐藏加载动画
+        loadingIndicator.classList.remove('active');
 
+        // 回显历史记录
         if (data.chat_content && typeof data.chat_content === 'string') {
-            let history = null;
-            try {
-                // 尝试解析为 JSON
-                history = JSON.parse(data.chat_content);
-            } catch (e) {
-                console.warn("Chat content is not valid JSON, treating as empty history:", data.chat_content);
-                // 可选：如果想兼容旧数据，可尝试其他方式，但建议统一用 JSON
-                history = null;
-            }
+          let history = null;
+          try {
+            history = JSON.parse(data.chat_content);
+          } catch (e) {
+            console.warn("Chat content is not valid JSON:", data.chat_content);
+            history = null;
+          }
 
-            if (Array.isArray(history)) {
-                conversation = history;
-                history.forEach(msg => {
-                if (msg.role === 'user') {
-                    addMessage('user', msg.content);
-                } else if (msg.role === 'assistant') {
-                    addMessage('bot', msg.content);
-                }
-                });
-            } else {
-                // 如果不是数组，清空或提示
-                console.log("History is not an array, ignoring.");
-            }
+          if (Array.isArray(history)) {
+            conversation = history;
+            history.forEach(msg => {
+              if (msg.role === 'user') {
+                addMessage('user', msg.content);
+              } else if (msg.role === 'assistant') {
+                addMessage('bot', msg.content);
+              }
+            });
+          }
         }
+      } catch (error) {
+        // 加载失败
+        loadingIndicator.textContent = '❌ 加载失败，请刷新重试';
+        loadingIndicator.classList.remove('active');
+        loadingIndicator.style.color = '#ef4444';
+        chatBox.appendChild(loadingIndicator);
+        console.error("登录或加载历史记录失败:", error);
       }
+    }
 
     async function sendMessage() {
       const text = userInput.value.trim();
@@ -157,7 +198,6 @@
       userInput.value = '';
       sendBtn.disabled = true;
 
-      // 添加 bot 占位
       const botMsg = document.createElement('div');
       botMsg.className = 'message';
       botMsg.innerHTML = '<strong class="bot">Bot:</strong> ';
@@ -172,7 +212,7 @@
         const res = await fetch('/chat/chat_stream', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ conversation,username })
+          body: JSON.stringify({ conversation, username })
         });
 
         const reader = res.body.getReader();
@@ -192,20 +232,42 @@
         botTextSpan.textContent = '❌ 出错了：' + e.message;
       } finally {
         sendBtn.disabled = false;
-        const res = await fetch('/chat/update_content', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ conversation,username })
+        await fetch('/chat/update_content', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ conversation, username })
         });
       }
     }
 
+    async function clearChat() {
+      if (!confirm("确定要清空所有聊天记录吗？此操作无法恢复。")) return;
+
+      conversation = [];
+      chatBox.innerHTML = '';
+      // 重新插入 loading 元素（可选，但清空后不需要，除非再次登录）
+      // 通常清空后用户继续聊天，所以不插入 loading
+
+      try {
+        await fetch('/chat/update_content', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ conversation: [], username })
+        });
+      } catch (e) {
+        console.error("清空聊天记录失败:", e);
+        alert("清空失败，请重试。");
+      }
+    }
+
+    // 事件绑定
     sendBtn.addEventListener('click', sendMessage);
     userInput.addEventListener('keypress', (e) => {
       if (e.key === 'Enter') sendMessage();
     });
+    clearBtn.addEventListener('click', clearChat);
 
-    // 启动
+    // 启动应用
     login();
   </script>
 </body>

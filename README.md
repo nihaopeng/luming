@@ -2,6 +2,19 @@
 
 luming 是一个简洁高效的语言模型训练和推理框架, 主要参考[minimind](https://github.com/jingyaogong/minimind)项目（大部分代码是直接迁移的），专为快速入门和实践语言模型而设计。支持预训练、指令微调(SFT)、评估和部署的完整生命周期。支持qwen0.6B微调与评测。
 
+## 环境
+
+train
+---
+
++ 1，torch
+
++ 2，transformer
+
+web
+---
+`pip install starlette toml uvicorn`
+
 ## 🚀 快速开始
 
 ### 1. 预训练
@@ -20,7 +33,10 @@ CUDA_VISIBLE_DEVICES=1 python train.py --dtype=float16 --data_path "./dataset/sf
 
 基于qwen0.6B模型微调，使用[sft_mini_512](https://www.modelscope.cn/datasets/gongjy/minimind_dataset/files)数据集
 ```bash
-CUDA_VISIBLE_DEVICES=1 python train.py --dtype=float16 --data_path "./dataset/sft_mini_512.jsonl" --tokenizer_path "./tokenizer/qwen0.6Bbase" --train_mode "sft" --save_weight "./out/qwen_sft" --from_weight "./out/qwen0.6Bbase" --use_compile 0 --epochs 2 --sep "<|im_start|>assistant,<|im_end|>,<|endoftext|>"
+# 缩小微调数据集的规模，由于qwen0.6B已经具有很好的生成能力，所以这里主要做对齐工作，不需要太大的数据集。让模型学到回答问题的能力即可。
+head -n 50000 dataset/sft_mini_512.jsonl  > dataset/sft_mini_512_head_50000.jsonl
+
+CUDA_VISIBLE_DEVICES=1 python train.py --dtype=float16 --data_path "./dataset/sft_mini_512_head_50000.jsonl" --tokenizer_path "./tokenizer/qwen0.6Bbase" --train_mode "sft" --save_weight "./out/qwen_sft" --from_weight "./out/qwen0.6Bbase" --use_compile 0 --epochs 2 --sep "<|im_start|>assistant,<|im_end|>,<|endoftext|>"
 ```
 
 ### 3. 推理测试
@@ -37,6 +53,12 @@ CUDA_VISIBLE_DEVICES=2 python eval.py --tokenizer_path "./tokenizer/qwen0.6Bbase
 # sft qwen0.6B eval
 CUDA_VISIBLE_DEVICES=2 python eval.py --tokenizer_path "./tokenizer/qwen0.6Bbase" --from_weight "./out/qwen_sft" --sep "<|im_start|>assistant,<|im_end|>,<|endoftext|>" --eval_mode "sft" --stream 1
 ```
+
+## 🚀 web
+
+`pip install starlette toml uvicorn`
+
+`python -m web.main`
 
 ## 🏗️ 核心架构
 
@@ -103,7 +125,6 @@ print(tokenizer.decode(outputs[0], skip_special_tokens=True))
 ## Notes
 
 这个 README 专注于 MiniMind 框架的核心功能和快速使用方法。框架还包含许多高级特性，如：
-- 详细的日志记录和 WandB 集成
 - 灵活的学习率调度 luming:147-148 
 - 完整的参数统计和分析工具 luming:121-131 
 
